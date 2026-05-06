@@ -104,6 +104,11 @@ export class GameRunner {
     if (this.game.config().spawnNations()) {
       this.game.addExecution(...this.execManager.nationExecutions());
     }
+    if (this.game.config().algoBots() > 0) {
+      this.game.addExecution(
+        ...this.execManager.spawnAlgoBots(this.game.config().algoBots()),
+      );
+    }
     this.game.addExecution(new WinCheckExecution());
     if (!this.game.config().isUnitDisabled(UnitType.Factory)) {
       this.game.addExecution(

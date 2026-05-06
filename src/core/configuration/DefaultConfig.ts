@@ -234,6 +234,9 @@ export class DefaultConfig implements Config {
   bots(): number {
     return this._gameConfig.bots;
   }
+  algoBots(): number {
+    return this._gameConfig.algoBots ?? 0;
+  }
   instantBuild(): boolean {
     return this._gameConfig.instantBuild;
   }

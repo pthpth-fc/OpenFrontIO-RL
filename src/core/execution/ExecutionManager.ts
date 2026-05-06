@@ -1,4 +1,4 @@
-import { Execution, Game } from "../game/Game";
+import { Execution, Game, PlayerInfo, PlayerType } from "../game/Game";
 import { PseudoRandom } from "../PseudoRandom";
 import { ClientID, GameID, StampedIntent, Turn } from "../Schemas";
 import { simpleHash } from "../Util";
@@ -17,6 +17,7 @@ import { EmbargoExecution } from "./EmbargoExecution";
 import { EmojiExecution } from "./EmojiExecution";
 import { MarkDisconnectedExecution } from "./MarkDisconnectedExecution";
 import { MoveWarshipExecution } from "./MoveWarshipExecution";
+import { AlgoBotExecution } from "./AlgoBotExecution";
 import { NationExecution } from "./NationExecution";
 import { NoOpExecution } from "./NoOpExecution";
 import { PauseExecution } from "./PauseExecution";
@@ -140,5 +141,21 @@ export class Executor {
       execs.push(new NationExecution(this.gameID, nation));
     }
     return execs;
+  }
+
+  spawnAlgoBots(numBots: number): AlgoBotExecution[] {
+    // Seed offset 3 avoids collisions with TribeSpawner (+2) and GameRunner (+0/+1).
+    const random = new PseudoRandom(simpleHash(this.gameID) + 3);
+    const bots: AlgoBotExecution[] = [];
+    for (let i = 0; i < numBots; i++) {
+      const playerInfo = new PlayerInfo(
+        `AlgoBot ${i + 1}`,
+        PlayerType.Human,
+        null,
+        random.nextID(),
+      );
+      bots.push(new AlgoBotExecution(this.gameID, playerInfo));
+    }
+    return bots;
   }
 }

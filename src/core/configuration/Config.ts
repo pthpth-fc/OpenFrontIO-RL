@@ -67,6 +67,7 @@ export interface Config {
   spawnNations(): boolean;
   isUnitDisabled(unitType: UnitType): boolean;
   bots(): number;
+  algoBots(): number;
   infiniteGold(): boolean;
   donateGold(): boolean;
   infiniteTroops(): boolean;
