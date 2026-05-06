@@ -21,18 +21,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from render import render_episode, PIL_AVAILABLE  # noqa: E402
 
 PROJECT_ROOT = str(Path(__file__).parent.parent)
-RENDER_EVERY = 25  # episodes
+RENDER_EVERY = 200  # episodes
 
-# Must match RLConfig.ts / env.py
-PATCH_CHANNELS = 4
-PATCH_SIZE = 32
-
-
-def _parse_obs(resp: dict) -> dict[str, np.ndarray]:
-    vec = np.array(resp["vec"], dtype=np.float32)
-    map_flat = np.array(resp["map"], dtype=np.float32)
-    map_chw = map_flat.reshape(PATCH_CHANNELS, PATCH_SIZE, PATCH_SIZE)
-    return {"vec": vec, "map": map_chw}
+def _parse_obs(resp: dict) -> np.ndarray:
+    return np.array(resp["vec"], dtype=np.float32)
 
 
 class RenderCallback(BaseCallback):
@@ -100,10 +92,8 @@ class RenderCallback(BaseCallback):
 
             done = False
             while not done:
-                # Add batch dim to dict obs for predict()
-                batched_obs = {k: v[None, ...] for k, v in obs.items()}
                 action, _ = self.model.predict(
-                    batched_obs,
+                    obs.reshape(1, -1),
                     action_masks=mask.reshape(1, -1),
                     deterministic=True,
                 )

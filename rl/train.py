@@ -25,13 +25,12 @@ from stable_baselines3.common.monitor import Monitor
 PROJECT_ROOT = str(Path(__file__).parent.parent)
 sys.path.insert(0, str(Path(__file__).parent))
 
-from cnn_policy import COMBINED, OpenFrontExtractor  # noqa: E402
 from env import OpenFrontEnv  # noqa: E402
 from render_callback import RenderCallback  # noqa: E402
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
-RUN_NAME = "ppo_openfront_v2_cnn"
+RUN_NAME = "ppo_v1_expand_bots"
 TOTAL_TIMESTEPS = 5_000_000
 N_STEPS = 2048
 BATCH_SIZE = 256
@@ -89,16 +88,10 @@ def main() -> None:
         n_eval_episodes=5,
         deterministic=True,
     )
-    render_cb = RenderCallback(RUNS_DIR, render_every=25)
-
-    policy_kwargs = dict(
-        features_extractor_class=OpenFrontExtractor,
-        # Actor/critic nets after the combined extractor (COMBINED = 384)
-        net_arch=dict(pi=[256, 128], vf=[256, 128]),
-    )
+    render_cb = RenderCallback(RUNS_DIR, render_every=200)
 
     model = MaskablePPO(
-        "MultiInputPolicy",
+        "MlpPolicy",
         train_env,
         n_steps=N_STEPS,
         batch_size=BATCH_SIZE,
@@ -107,7 +100,6 @@ def main() -> None:
         gamma=GAMMA,
         ent_coef=ENT_COEF,
         clip_range=CLIP_RANGE,
-        policy_kwargs=policy_kwargs,
         device=DEVICE,
         verbose=1,
     )

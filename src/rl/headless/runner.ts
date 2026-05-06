@@ -143,27 +143,28 @@ async function resetEpisode(): Promise<ResetResponse> {
     nations: "disabled",
     donateGold: false,
     donateTroops: false,
-    bots: 0,
+    bots: NUM_OPPONENTS,
     infiniteGold: false,
     infiniteTroops: false,
     instantBuild: false,
     randomSpawn: true,
-    algoBots: NUM_OPPONENTS,
+    algoBots: 0,
   };
 
   const config = makeConfig(gameConfig);
   game = createGame([agentInfo], [], gameMap, miniGameMap, config);
 
-  // Spawn algobots
-  const random = new PseudoRandom(simpleHash(GAME_ID) + 3);
+  // Spawn regular tribe bots (PlayerType.Bot — weaker stats than Human; SpawnExecution
+  // auto-attaches TribeExecution which gives them their AI behavior)
+  const random = new PseudoRandom(simpleHash(GAME_ID) + 2);
   for (let i = 0; i < NUM_OPPONENTS; i++) {
     const botInfo = new PlayerInfo(
-      `Bot${i + 1}`,
-      PlayerType.Human,
+      `Tribe${i + 1}`,
+      PlayerType.Bot,
       null,
       random.nextID(),
     );
-    game.addExecution(new AlgoBotExecution(GAME_ID, botInfo));
+    game.addExecution(new SpawnExecution(GAME_ID, botInfo));
   }
   game.addExecution(new WinCheckExecution());
 

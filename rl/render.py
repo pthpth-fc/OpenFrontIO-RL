@@ -34,11 +34,26 @@ OCEAN_COLOR = (20, 30, 60)
 AGENT_BORDER = (255, 255, 255)
 
 
+AGENT_COLOR = (70, 130, 255)        # blue — always the RL agent
+OPPONENT_COLORS = [
+    (255, 80, 80),    # red
+    (80, 200, 80),    # green
+    (255, 200, 50),   # yellow
+    (200, 80, 255),   # purple
+    (255, 140, 0),    # orange
+    (0, 200, 200),    # cyan
+    (255, 100, 180),  # pink
+    (180, 120, 60),   # brown
+]
+
+
 def _color_for(player_idx: int, is_agent: bool) -> tuple[int, int, int]:
     if player_idx == 0:
         return PLAYER_COLORS[0]
-    idx = player_idx % len(PLAYER_COLORS)
-    return PLAYER_COLORS[idx]
+    if is_agent:
+        return AGENT_COLOR
+    # Map non-agent players to opponent colors deterministically
+    return OPPONENT_COLORS[(player_idx - 1) % len(OPPONENT_COLORS)]
 
 
 def render_snapshot(
@@ -88,7 +103,7 @@ def render_snapshot(
         font = ImageFont.load_default()
     except Exception:
         font = None
-    label = f"t={snapshot['ticks']}"
+    label = f"t={snapshot['ticks']}  agent=BLUE"
     draw.text((4, 4), label, fill=(255, 255, 255), font=font)
 
     return img
