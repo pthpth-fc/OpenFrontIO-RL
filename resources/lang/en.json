@@ -200,6 +200,7 @@
     "options_title": "Options",
     "bots": "Tribes: ",
     "bots_disabled": "Disabled",
+    "algo_bots": "AlgoBots",
     "nations": "Nations: ",
     "nations_disabled": "Disabled",
     "instant_build": "Instant build",

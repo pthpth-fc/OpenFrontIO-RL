@@ -69,6 +69,7 @@ export class SinglePlayerModal extends BaseModal {
   @state() private nations: number = 0;
   @state() private defaultNationCount: number = 0;
   @state() private bots: number = DEFAULT_OPTIONS.bots;
+  @state() private algoBots: number = 1;
   @state() private infiniteGold: boolean = DEFAULT_OPTIONS.infiniteGold;
   @state() private infiniteTroops: boolean = DEFAULT_OPTIONS.infiniteTroops;
   @state() private compactMap: boolean = DEFAULT_OPTIONS.compactMap;
@@ -171,6 +172,34 @@ export class SinglePlayerModal extends BaseModal {
 
   render() {
     const inputCards = [
+      html`<div
+        class="flex items-center justify-between px-4 py-3 rounded-xl bg-white/5 border border-white/10"
+      >
+        <span class="text-sm text-white/80 font-medium"
+          >${translateText("single_modal.algo_bots")}</span
+        >
+        <div class="flex items-center gap-2">
+          <button
+            @click=${() => {
+              this.algoBots = Math.max(0, this.algoBots - 1);
+            }}
+            class="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold transition-colors"
+          >
+            −
+          </button>
+          <span class="w-5 text-center text-white font-bold"
+            >${this.algoBots}</span
+          >
+          <button
+            @click=${() => {
+              this.algoBots = Math.min(10, this.algoBots + 1);
+            }}
+            class="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold transition-colors"
+          >
+            +
+          </button>
+        </div>
+      </div>`,
       html`<toggle-input-card
         .labelKey=${"single_modal.max_timer"}
         .checked=${this.maxTimer}
@@ -688,6 +717,7 @@ export class SinglePlayerModal extends BaseModal {
               difficulty: this.selectedDifficulty,
               maxTimerValue: finalMaxTimerValue,
               bots: this.bots,
+              algoBots: this.algoBots,
               infiniteGold: this.infiniteGold,
               donateGold: this.gameMode === GameMode.Team,
               donateTroops: this.gameMode === GameMode.Team,
