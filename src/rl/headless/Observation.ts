@@ -82,7 +82,7 @@ export function computeActionMask(
   agent: Player,
   neighbors: Neighbors,
 ): boolean[] {
-  const mask: boolean[] = new Array(1 + K_NEIGHBORS * 3 + 2).fill(false);
+  const mask: boolean[] = new Array(1 + K_NEIGHBORS * 3 + 3).fill(false);
   mask[0] = true; // no-op always valid
 
   for (let k = 0; k < K_NEIGHBORS; k++) {
@@ -109,6 +109,9 @@ export function computeActionMask(
   // Build actions always available (ConstructionExecution ignores gold silently)
   mask[1 + K_NEIGHBORS * 3] = agent.numTilesOwned() > 5; // city
   mask[1 + K_NEIGHBORS * 3 + 1] = agent.borderTiles().size > 0; // defpost
+
+  // Expand (attack TerraNullius): valid whenever agent has tiles to attack from
+  mask[1 + K_NEIGHBORS * 3 + 2] = agent.numTilesOwned() > 0;
 
   return mask;
 }

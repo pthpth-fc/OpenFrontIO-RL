@@ -4,8 +4,8 @@ export const K_NEIGHBORS = 8;
 // Per-neighbor features: 7 each × K
 export const OBS_SIZE = 6 + K_NEIGHBORS * 7;
 
-// 0=noop, 1..K=attack[i], K+1..2K=ally_req[i], 2K+1..3K=break_ally[i], 3K+1=city, 3K+2=defpost
-export const ACTION_SIZE = 1 + K_NEIGHBORS * 3 + 2;
+// 0=noop, 1..K=attack[i], K+1..2K=ally_req[i], 2K+1..3K=break_ally[i], 3K+1=city, 3K+2=defpost, 3K+3=expand (attack TerraNullius)
+export const ACTION_SIZE = 1 + K_NEIGHBORS * 3 + 3;
 
 // Spatial patch (channels-first, CHW)
 // Channels: 0=land, 1=self, 2=enemy, 3=ally

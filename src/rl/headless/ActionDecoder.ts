@@ -55,6 +55,11 @@ export function decodeAction(
     return [new ConstructionExecution(agent, UnitType.DefensePost, tile)];
   }
 
+  // 3K+3: expand into TerraNullius (null target = attack unclaimed land)
+  if (action === K_NEIGHBORS * 3 + 3) {
+    return [new AttackExecution(null, agent, null, null)];
+  }
+
   return [];
 }
 
