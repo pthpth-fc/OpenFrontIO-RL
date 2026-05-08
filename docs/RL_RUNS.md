@@ -159,6 +159,18 @@ See `docs/RL_ARCHITECTURE.md` for the full obs/action specification.
 
 ## Decisions still on the table
 
+0. **Multi-scale spatial obs (deferred — wait for v10 signal first).** The
+   v10 CNN sees a 32×32 patch around the agent's centroid. For agents with
+   territories larger than ~32 tiles in any dimension, the outer borders
+   are *outside* the patch — the CNN can't see them. We're starting v10
+   with the single-scale patch and reading what it learns; if performance
+   plateaus and renders show the agent failing on its outer rim (where the
+   patch can't see), we'll add a second channel set: a downsampled global
+   view of the whole map (e.g. 64×64 covering everything at coarse
+   resolution). The CNN would then have both local detail and global
+   layout. Cheap to add (~30 lines TS) but only worth doing if we observe
+   the limitation hurting in practice.
+
 1. **Is build placement worth learning?** Currently fixed (first border tile).
    Pointer-net output head would let the model pick *where* to build, but it's
    substantial new infra. Punt until we see whether build location is

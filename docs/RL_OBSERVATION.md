@@ -148,6 +148,14 @@ state lives in the flat features (`tiles_pct`, `rank`, etc.).
 3. **Resolution.** 32 pixels per side means a `world` map (2000×1000 tiles)
    is sampled at ~1.6% coverage. Tactical resolution is fine; strategic
    reasoning has to come from the flat features.
+4. **Big agents see only their tactical core, not their full territory.**
+   Once the agent grows past ~32 tiles in any dimension, the outer
+   borders fall outside the patch. The CNN can still reason about what's
+   near the centroid (tactical fights), but cannot see distant borders or
+   far flanks. Mitigated for now by the flat features (`tiles_pct`,
+   `border_exposure`, `tile_delta_recent`); the structural fix is
+   multi-scale obs — see `RL_RUNS.md` § "Decisions still on the table"
+   item 0. Deferred until v10 results justify the extra complexity.
 
 ---
 
