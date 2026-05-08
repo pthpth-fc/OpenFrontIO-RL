@@ -17,7 +17,7 @@ from gymnasium import spaces
 
 # Must match RLConfig.ts
 K_NEIGHBORS = 8
-OBS_SIZE = 6 + K_NEIGHBORS * 7         # 62
+OBS_SIZE = 10 + K_NEIGHBORS * 7        # 66 (10 self + 7×K neighbor features)
 ACTION_SIZE = 1 + K_NEIGHBORS * 3 + 3  # 28 (adds expand=attack TerraNullius)
 PATCH_SIZE = 32
 PATCH_CHANNELS = 4                      # land, self, enemy, ally

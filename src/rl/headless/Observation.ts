@@ -1,29 +1,43 @@
-import { Game, Player, Relation } from "../../core/game/Game";
-import { K_NEIGHBORS, OBS_SIZE } from "./RLConfig";
+import { Game, Player, UnitType } from "../../core/game/Game";
+import { K_NEIGHBORS, MAX_EPISODE_TICKS, OBS_SIZE } from "./RLConfig";
 
 export interface Neighbors {
   list: (Player | null)[];
 }
 
-export function getNeighbors(game: Game, agent: Player): Neighbors {
-  const alive = game.players().filter((p) => p.isAlive() && p.id() !== agent.id());
-  const bordering = new Set<string>(
-    agent
-      .nearby()
-      .filter((n) => n.isPlayer())
-      .map((n) => (n as Player).id()),
-  );
+/**
+ * Build a stable opponent ordering for the episode. Slot k is bound to a
+ * specific opponent ID for the entire episode — when that opponent dies,
+ * the slot stays empty (null) instead of shifting other opponents up.
+ *
+ * Ordering: sort opponents by smallID() so the assignment is deterministic
+ * within a game (independent of who's bordering whom at any moment).
+ */
+export function buildStableNeighborOrder(game: Game, agent: Player): string[] {
+  const opponents = game
+    .players()
+    .filter((p) => p.id() !== agent.id())
+    .sort((a, b) => a.smallID() - b.smallID());
+  return opponents.slice(0, K_NEIGHBORS).map((p) => p.id());
+}
 
-  const sorted = alive.sort((a, b) => {
-    const ab = bordering.has(a.id()) ? 1 : 0;
-    const bb = bordering.has(b.id()) ? 1 : 0;
-    if (ab !== bb) return bb - ab;
-    return b.numTilesOwned() - a.numTilesOwned();
-  });
-
+/**
+ * Resolve the stable order to current Player references. Dead opponents
+ * become null in their slot so the model sees "this slot is empty now".
+ */
+export function getNeighbors(
+  game: Game,
+  stableOrder: string[],
+): Neighbors {
   const list: (Player | null)[] = [];
   for (let k = 0; k < K_NEIGHBORS; k++) {
-    list.push(sorted[k] ?? null);
+    const id = stableOrder[k];
+    if (!id || !game.hasPlayer(id)) {
+      list.push(null);
+      continue;
+    }
+    const p = game.player(id);
+    list.push(p.isAlive() ? p : null);
   }
   return { list };
 }
@@ -33,6 +47,8 @@ export function extractObs(
   agent: Player,
   totalLandTiles: number,
   neighbors: Neighbors,
+  ticks: number,
+  prevTiles: number,
 ): Float32Array {
   const obs = new Float32Array(OBS_SIZE);
   let i = 0;
@@ -44,11 +60,10 @@ export function extractObs(
   );
   const rank = sortedByTiles.findIndex((p) => p.id() === agent.id());
 
-  // Self (6)
+  // Self (10)
   obs[i++] = maxTroops > 0 ? Math.min(agent.troops() / maxTroops, 1) : 0;
   obs[i++] = Math.min(Number(agent.gold()), 10000) / 10000;
-  obs[i++] =
-    totalLandTiles > 0 ? agent.numTilesOwned() / totalLandTiles : 0;
+  obs[i++] = totalLandTiles > 0 ? agent.numTilesOwned() / totalLandTiles : 0;
   obs[i++] =
     agent.numTilesOwned() > 0
       ? Math.min(agent.borderTiles().size / agent.numTilesOwned(), 1)
@@ -56,6 +71,22 @@ export function extractObs(
   obs[i++] =
     alive.length > 1 ? agent.alliances().length / (alive.length - 1) : 0;
   obs[i++] = alive.length > 1 ? rank / (alive.length - 1) : 0;
+
+  // Game phase (1)
+  obs[i++] = Math.min(ticks / MAX_EPISODE_TICKS, 1);
+
+  // Structure counts, log-scaled to keep small numbers separable (2)
+  // log(1+count)/log(11) ≈ maps 0→0, 10→1, saturates above
+  const numCities = agent.units(UnitType.City).length;
+  const numDefposts = agent.units(UnitType.DefensePost).length;
+  obs[i++] = Math.min(Math.log1p(numCities) / Math.log(11), 1);
+  obs[i++] = Math.min(Math.log1p(numDefposts) / Math.log(11), 1);
+
+  // Recent tile delta as a fraction of current territory (1)
+  // Positive = growing, negative = losing tiles to attackers
+  const cur = agent.numTilesOwned();
+  const denom = Math.max(cur, 1);
+  obs[i++] = Math.max(-1, Math.min(1, (cur - prevTiles) / denom));
 
   // Neighbors (K × 7)
   for (const n of neighbors.list) {
@@ -71,8 +102,14 @@ export function extractObs(
     obs[i++] = totalLandTiles > 0 ? n.numTilesOwned() / totalLandTiles : 0;
     obs[i++] = agent.allianceWith(n) !== null ? 1 : 0;
     obs[i++] = agent.relation(n) / 3;
-    obs[i++] = agent.nearby().some((nb) => nb.isPlayer() && (nb as Player).id() === n.id()) ? 1 : 0;
-    obs[i++] = agent.incomingAttacks().some((a) => a.attacker().id() === n.id()) ? 1 : 0;
+    obs[i++] = agent
+      .nearby()
+      .some((nb) => nb.isPlayer() && (nb as Player).id() === n.id())
+      ? 1
+      : 0;
+    obs[i++] = agent.incomingAttacks().some((a) => a.attacker().id() === n.id())
+      ? 1
+      : 0;
   }
 
   return obs;
@@ -106,7 +143,7 @@ export function computeActionMask(
     }
   }
 
-  // Build actions always available (ConstructionExecution ignores gold silently)
+  // Build actions
   mask[1 + K_NEIGHBORS * 3] = agent.numTilesOwned() > 5; // city
   mask[1 + K_NEIGHBORS * 3 + 1] = agent.borderTiles().size > 0; // defpost
 

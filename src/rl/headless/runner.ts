@@ -52,6 +52,7 @@ import { GameConfig } from "../../core/Schemas";
 import { DefaultConfig } from "../../core/configuration/DefaultConfig";
 import { AlgoBotExecution } from "../../core/execution/AlgoBotExecution";
 import { SpawnExecution } from "../../core/execution/SpawnExecution";
+import { TribeSpawner } from "../../core/execution/TribeSpawner";
 import { WinCheckExecution } from "../../core/execution/WinCheckExecution";
 import { PseudoRandom } from "../../core/PseudoRandom";
 import { simpleHash } from "../../core/Util";
@@ -61,15 +62,22 @@ import {
   MAX_EPISODE_TICKS,
   NUM_OPPONENTS,
   REWARD_DEATH,
+  REWARD_KILL,
   REWARD_TICK,
   REWARD_TILE_GAIN,
   REWARD_WIN,
   SPAWN_PHASE_BUFFER,
   TRAINING_MAP,
 } from "./RLConfig";
-import { computeActionMask, extractObs, getNeighbors } from "./Observation";
+import {
+  buildStableNeighborOrder,
+  computeActionMask,
+  extractObs,
+  getNeighbors,
+} from "./Observation";
 import { decodeAction } from "./ActionDecoder";
 import { extractSpatialObs } from "./SpatialObs";
+import { attachDemoHook } from "./DemoCollector";
 
 const MAPS_DIR = path.resolve(
   __dirname,
@@ -127,9 +135,26 @@ let game: Game | null = null;
 let agentPlayer: Player | null = null;
 let ticks = 0;
 let prevTiles = 0;
+let neighborOrder: string[] = []; // stable opponent IDs (slot k bound for the episode)
+let aliveOpponentIDs = new Set<string>(); // for kill-reward detection
+let currentMaxTicks = MAX_EPISODE_TICKS;
 
-async function resetEpisode(): Promise<ResetResponse> {
-  const { gameMap, miniGameMap } = await loadMap(TRAINING_MAP);
+interface ResetOverrides {
+  map?: string;
+  numTribes?: number;
+  numAlgoBots?: number;
+  maxTicks?: number;
+  spawnBuffer?: number;
+}
+
+async function resetEpisode(overrides: ResetOverrides = {}): Promise<ResetResponse> {
+  const mapName = overrides.map ?? TRAINING_MAP;
+  const numAlgoBots = overrides.numAlgoBots ?? NUM_OPPONENTS;
+  const numTribes = overrides.numTribes ?? 0;
+  currentMaxTicks = overrides.maxTicks ?? MAX_EPISODE_TICKS;
+  const spawnBuffer = overrides.spawnBuffer ?? SPAWN_PHASE_BUFFER;
+
+  const { gameMap, miniGameMap } = await loadMap(mapName);
 
   const agentID = "rl-agent";
   const agentInfo = new PlayerInfo("RLAgent", PlayerType.Human, null, agentID);
@@ -143,29 +168,35 @@ async function resetEpisode(): Promise<ResetResponse> {
     nations: "disabled",
     donateGold: false,
     donateTroops: false,
-    bots: NUM_OPPONENTS,
+    bots: numTribes,
     infiniteGold: false,
     infiniteTroops: false,
     instantBuild: false,
     randomSpawn: true,
-    algoBots: 0,
+    algoBots: numAlgoBots,
   };
 
   const config = makeConfig(gameConfig);
   game = createGame([agentInfo], [], gameMap, miniGameMap, config);
 
-  // Spawn regular tribe bots (PlayerType.Bot — weaker stats than Human; SpawnExecution
-  // auto-attaches TribeExecution which gives them their AI behavior)
-  const random = new PseudoRandom(simpleHash(GAME_ID) + 2);
-  for (let i = 0; i < NUM_OPPONENTS; i++) {
+  // Spawn AlgoBots — full Human stats + nation-style attack/alliance/structure AI
+  const random = new PseudoRandom(simpleHash(GAME_ID) + 3);
+  for (let i = 0; i < numAlgoBots; i++) {
     const botInfo = new PlayerInfo(
-      `Tribe${i + 1}`,
-      PlayerType.Bot,
+      `AlgoBot${i + 1}`,
+      PlayerType.Human,
       null,
       random.nextID(),
     );
-    game.addExecution(new SpawnExecution(GAME_ID, botInfo));
+    game.addExecution(new AlgoBotExecution(GAME_ID, botInfo));
   }
+
+  // Spawn tribe bots (PlayerType.Bot, weak stats, simple AI auto-attached on spawn)
+  if (numTribes > 0) {
+    const tribeSpawner = new TribeSpawner(game, GAME_ID);
+    game.addExecution(...tribeSpawner.spawnTribes(numTribes));
+  }
+
   game.addExecution(new WinCheckExecution());
 
   // Spawn agent
@@ -175,7 +206,7 @@ async function resetEpisode(): Promise<ResetResponse> {
   prevTiles = 0;
 
   // Run through spawn phase buffer before first observation
-  for (let t = 0; t < SPAWN_PHASE_BUFFER; t++) {
+  for (let t = 0; t < spawnBuffer; t++) {
     game.executeNextTick();
     ticks++;
   }
@@ -183,14 +214,22 @@ async function resetEpisode(): Promise<ResetResponse> {
   agentPlayer = game.player(agentID);
   prevTiles = agentPlayer.numTilesOwned();
 
+  // Build stable neighbor ordering (slot k bound to specific opponent for the whole episode)
+  neighborOrder = buildStableNeighborOrder(game, agentPlayer);
+  aliveOpponentIDs = new Set(
+    neighborOrder.filter((id) => game!.hasPlayer(id) && game!.player(id).isAlive()),
+  );
+
   return buildResetResponse();
 }
 
 function buildResetResponse(): ResetResponse {
   const g = game!;
   const agent = agentPlayer!;
-  const neighbors = getNeighbors(g, agent);
-  const vec = Array.from(extractObs(g, agent, g.numLandTiles(), neighbors));
+  const neighbors = getNeighbors(g, neighborOrder);
+  const vec = Array.from(
+    extractObs(g, agent, g.numLandTiles(), neighbors, ticks, prevTiles),
+  );
   const map = Array.from(extractSpatialObs(g, agent));
   const mask = computeActionMask(agent, neighbors);
   return { vec, map, mask };
@@ -200,8 +239,13 @@ function stepEpisode(action: number): StepResponse {
   const g = game!;
   const agent = agentPlayer!;
 
-  // Apply action
-  const executions = decodeAction(action, g, agent, getNeighbors(g, agent));
+  // Apply action — use the stable per-episode neighbor order
+  const executions = decodeAction(
+    action,
+    g,
+    agent,
+    getNeighbors(g, neighborOrder),
+  );
   if (executions.length > 0) {
     g.addExecution(...executions);
   }
@@ -211,7 +255,7 @@ function stepEpisode(action: number): StepResponse {
   for (let t = 0; t < DECISION_INTERVAL; t++) {
     g.executeNextTick();
     ticks++;
-    if (g.getWinner() !== null || ticks >= MAX_EPISODE_TICKS) {
+    if (g.getWinner() !== null || ticks >= currentMaxTicks) {
       done = true;
       break;
     }
@@ -219,6 +263,19 @@ function stepEpisode(action: number): StepResponse {
 
   // Compute reward
   let reward = REWARD_TICK * DECISION_INTERVAL;
+
+  // Kill detection — opponents that were alive last step but aren't now
+  let kills = 0;
+  const stillAlive = new Set<string>();
+  for (const id of aliveOpponentIDs) {
+    if (g.hasPlayer(id) && g.player(id).isAlive()) {
+      stillAlive.add(id);
+    } else {
+      kills++;
+    }
+  }
+  aliveOpponentIDs = stillAlive;
+  reward += kills * REWARD_KILL;
 
   if (!agent.isAlive()) {
     reward += REWARD_DEATH;
@@ -241,27 +298,55 @@ function stepEpisode(action: number): StepResponse {
     }
   }
 
-  const neighbors = getNeighbors(g, agent);
-  const vec = Array.from(extractObs(g, agent, g.numLandTiles(), neighbors));
+  const neighbors = getNeighbors(g, neighborOrder);
+  const vec = Array.from(
+    extractObs(g, agent, g.numLandTiles(), neighbors, ticks, prevTiles),
+  );
   const map = Array.from(extractSpatialObs(g, agent));
   const mask = computeActionMask(agent, neighbors);
 
-  return { vec, map, mask, reward, done, info: { ticks } };
+  return { vec, map, mask, reward, done, info: { ticks, kills } };
+}
+
+/**
+ * Encode the static terrain of the current map as a base64 byte string.
+ * Each byte holds one tile in the order y*width + x:
+ *   bits 0..2  → TerrainType (0=Plains, 1=Highland, 2=Mountain, 3=Lake, 4=Ocean)
+ *   bit  3     → isShoreline
+ */
+function getTerrain(): {
+  width: number;
+  height: number;
+  terrain_b64: string;
+} {
+  const g = game!;
+  const w = g.width();
+  const h = g.height();
+  const buf = Buffer.alloc(w * h);
+  let i = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const ref = g.ref(x, y);
+      const t = g.terrainType(ref) & 0x07;
+      const shore = g.isShoreline(ref) ? 0x08 : 0;
+      buf[i++] = t | shore;
+    }
+  }
+  return { width: w, height: h, terrain_b64: buf.toString("base64") };
 }
 
 function snapshotGame(): SnapshotResponse {
   const g = game!;
   const agent = agentPlayer!;
 
-  // Build player index map (1-based; 0 = unclaimed)
+  // Use smallID() as a stable, permanent index — never changes when other
+  // players die, so colours stay consistent across frames.
   const alivePlayers = g.players().filter((p) => p.isAlive());
-  const playerIndex = new Map<string, number>();
-  alivePlayers.forEach((p, i) => playerIndex.set(p.id(), i + 1));
-
-  const players = alivePlayers.map((p, i) => ({
+  const players = alivePlayers.map((p) => ({
     id: p.id(),
     name: p.displayName(),
     isAgent: p.id() === agent.id(),
+    idx: p.smallID(),
   }));
 
   const owned: number[] = [];
@@ -269,10 +354,7 @@ function snapshotGame(): SnapshotResponse {
     if (!g.isLand(ref)) return;
     const o = g.owner(ref);
     if (o.isPlayer()) {
-      const idx = playerIndex.get((o as Player).id()) ?? 0;
-      if (idx > 0) {
-        owned.push(ref, idx);
-      }
+      owned.push(ref, (o as Player).smallID());
     }
   });
 
@@ -285,6 +367,135 @@ function snapshotGame(): SnapshotResponse {
   };
 }
 
+// ── Demo episode (record AlgoBot trajectories for behavioral cloning) ──────
+
+/**
+ * Run one episode with N AlgoBots only (no RL agent), and stream
+ * (obs, mask, action) samples to stdout — one per line — for every
+ * AlgoBot decision (attack/ally/break_ally/build/expand) the bot makes.
+ *
+ * Output format (newline-delimited JSON):
+ *   {"sample": {"vec": [...], "mask": [...], "action": <int>, "player_id": "..."}}
+ *   {"sample": ...}
+ *   ...
+ *   {"done": true, "n_samples": <int>, "ticks": <int>}
+ */
+async function runDemoEpisode(numBots: number): Promise<void> {
+  const { gameMap, miniGameMap } = await loadMap(TRAINING_MAP);
+
+  const gameConfig: GameConfig = {
+    gameMap: GameMapType.World,
+    gameMapSize: GameMapSize.Normal,
+    gameMode: GameMode.FFA,
+    gameType: GameType.Singleplayer,
+    difficulty: Difficulty.Medium,
+    nations: "disabled",
+    donateGold: false,
+    donateTroops: false,
+    bots: 0,
+    infiniteGold: false,
+    infiniteTroops: false,
+    instantBuild: false,
+    randomSpawn: true,
+    algoBots: numBots,
+  };
+
+  const config = makeConfig(gameConfig);
+  const localGame = createGame([], [], gameMap, miniGameMap, config);
+
+  // Use a time-varying seed so each demo episode is different
+  const random = new PseudoRandom(simpleHash(GAME_ID + Date.now()) + 3);
+  const botInfos: PlayerInfo[] = [];
+  for (let i = 0; i < numBots; i++) {
+    const info = new PlayerInfo(
+      `Bot${i + 1}`,
+      PlayerType.Human,
+      null,
+      random.nextID(),
+    );
+    botInfos.push(info);
+    localGame.addExecution(new AlgoBotExecution(GAME_ID, info));
+  }
+  localGame.addExecution(new WinCheckExecution());
+
+  // Run spawn phase
+  let demoTicks = 0;
+  for (let t = 0; t < SPAWN_PHASE_BUFFER; t++) {
+    localGame.executeNextTick();
+    demoTicks++;
+  }
+
+  // After spawn phase, build each bot's stable neighbor order
+  const neighborOrders = new Map<string, string[]>();
+  const prevTilesByBot = new Map<string, number>();
+  for (const info of botInfos) {
+    if (!localGame.hasPlayer(info.id)) continue;
+    const p = localGame.player(info.id);
+    if (!p.isAlive()) continue;
+    neighborOrders.set(info.id, buildStableNeighborOrder(localGame, p));
+    prevTilesByBot.set(info.id, p.numTilesOwned());
+  }
+
+  let nSamples = 0;
+
+  // Hook addExecution: when a tracked bot adds a recognized execution,
+  // snapshot its current obs and emit a sample.
+  const unhook = attachDemoHook(localGame, neighborOrders, (playerID, action) => {
+    if (!localGame.hasPlayer(playerID)) return;
+    const player = localGame.player(playerID);
+    if (!player.isAlive()) return;
+    const order = neighborOrders.get(playerID);
+    if (!order) return;
+
+    const neighbors = getNeighbors(localGame, order);
+    const prevTiles = prevTilesByBot.get(playerID) ?? player.numTilesOwned();
+    const vec = Array.from(
+      extractObs(
+        localGame,
+        player,
+        localGame.numLandTiles(),
+        neighbors,
+        demoTicks,
+        prevTiles,
+      ),
+    );
+    const mask = computeActionMask(player, neighbors);
+
+    process.stdout.write(
+      JSON.stringify({
+        sample: { vec, mask, action, player_id: playerID },
+      }) + "\n",
+    );
+    nSamples++;
+  });
+
+  // Run game
+  while (
+    demoTicks < MAX_EPISODE_TICKS &&
+    localGame.getWinner() === null
+  ) {
+    localGame.executeNextTick();
+    demoTicks++;
+
+    // Update prevTiles per bot every DECISION_INTERVAL ticks
+    if (demoTicks % DECISION_INTERVAL === 0) {
+      for (const info of botInfos) {
+        if (!localGame.hasPlayer(info.id)) continue;
+        const p = localGame.player(info.id);
+        if (p.isAlive()) {
+          prevTilesByBot.set(info.id, p.numTilesOwned());
+        }
+      }
+    }
+  }
+
+  unhook();
+
+  process.stdout.write(
+    JSON.stringify({ done: true, n_samples: nSamples, ticks: demoTicks }) + "\n",
+  );
+}
+
 // ── Main loop ────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -294,7 +505,18 @@ async function main() {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    let msg: { cmd: string; action?: number; actions?: number[] };
+    let msg: {
+      cmd: string;
+      action?: number;
+      actions?: number[];
+      num_bots?: number;
+      // Optional reset overrides
+      map?: string;
+      num_tribes?: number;
+      num_algobots?: number;
+      max_ticks?: number;
+      spawn_buffer?: number;
+    };
     try {
       msg = JSON.parse(trimmed);
     } catch {
@@ -305,7 +527,13 @@ async function main() {
     }
 
     if (msg.cmd === "reset") {
-      const resp = await resetEpisode();
+      const resp = await resetEpisode({
+        map: msg.map,
+        numTribes: msg.num_tribes,
+        numAlgoBots: msg.num_algobots,
+        maxTicks: msg.max_ticks,
+        spawnBuffer: msg.spawn_buffer,
+      });
       process.stdout.write(JSON.stringify(resp) + "\n");
     } else if (msg.cmd === "step") {
       if (game === null || agentPlayer === null) {
@@ -316,6 +544,9 @@ async function main() {
       }
       const resp = stepEpisode(msg.action ?? 0);
       process.stdout.write(JSON.stringify(resp) + "\n");
+    } else if (msg.cmd === "demo_episode") {
+      const numBots = msg.num_bots ?? 4;
+      await runDemoEpisode(numBots);
     } else if (msg.cmd === "snapshot") {
       if (game === null || agentPlayer === null) {
         process.stdout.write(
@@ -324,6 +555,14 @@ async function main() {
         continue;
       }
       process.stdout.write(JSON.stringify(snapshotGame()) + "\n");
+    } else if (msg.cmd === "get_terrain") {
+      if (game === null) {
+        process.stdout.write(
+          JSON.stringify({ error: "call reset first" }) + "\n",
+        );
+        continue;
+      }
+      process.stdout.write(JSON.stringify(getTerrain()) + "\n");
     } else if (msg.cmd === "quit") {
       break;
     } else {
