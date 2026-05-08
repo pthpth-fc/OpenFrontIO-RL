@@ -22,5 +22,7 @@ eslint_out.txt
 
 # RL training artifacts
 rl/runs/
+rl/demos*.jsonl
+rl/*.pt
 __pycache__/
 *.pyc
