@@ -23,8 +23,16 @@ from render import render_episode, PIL_AVAILABLE  # noqa: E402
 PROJECT_ROOT = str(Path(__file__).parent.parent)
 RENDER_EVERY = 200  # episodes
 
-def _parse_obs(resp: dict) -> np.ndarray:
-    return np.array(resp["vec"], dtype=np.float32)
+PATCH_CHANNELS = 5
+PATCH_SIZE = 32
+
+
+def _parse_obs(resp: dict) -> dict:
+    """Match env.py's dict obs format so MaskablePPO MultiInputPolicy.predict works."""
+    vec = np.array(resp["vec"], dtype=np.float32)
+    map_flat = np.array(resp["map"], dtype=np.float32)
+    map_chw = map_flat.reshape(PATCH_CHANNELS, PATCH_SIZE, PATCH_SIZE)
+    return {"vec": vec, "map": map_chw}
 
 
 class RenderCallback(BaseCallback):
@@ -92,8 +100,10 @@ class RenderCallback(BaseCallback):
 
             done = False
             while not done:
+                # Add batch dim to dict obs (each value becomes (1, ...))
+                batched_obs = {k: v[None, ...] for k, v in obs.items()}
                 action, _ = self.model.predict(
-                    obs.reshape(1, -1),
+                    batched_obs,
                     action_masks=mask.reshape(1, -1),
                     deterministic=True,
                 )
