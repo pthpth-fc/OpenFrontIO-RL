@@ -26,18 +26,18 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 PROJECT_ROOT = str(Path(__file__).parent.parent)
 sys.path.insert(0, str(Path(__file__).parent))
 
+from cnn_policy import OpenFrontExtractor  # noqa: E402
 from env import OpenFrontEnv  # noqa: E402
 from render_callback import RenderCallback  # noqa: E402
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
-RUN_NAME = "ppo_v9_world_10algobots_parallel"
+RUN_NAME = "ppo_v10_cnn_dictobs"
 N_ENVS = 4  # parallel envs (each spawns its own runner subprocess)
-RESUME_FROM = str(
-    Path(__file__).parent
-    / "runs/ppo_v8_bc_warmstart/checkpoints/rl_model_150000_steps.zip"
-)
-BC_INIT_FROM = None  # not needed when resuming
+# v10 has incompatible obs/action shapes with v8 — must start fresh.
+# BC warm-start is essential to avoid the slow exploration phase.
+RESUME_FROM = None
+BC_INIT_FROM = str(Path(__file__).parent / "bc_model.pt")
 TOTAL_TIMESTEPS = 5_000_000
 N_STEPS = 2048
 BATCH_SIZE = 256
@@ -138,8 +138,13 @@ def main() -> None:
             verbose=1,
         )
     else:
+        # MultiInputPolicy + custom CNN+MLP feature extractor for Dict obs.
+        policy_kwargs = dict(
+            features_extractor_class=OpenFrontExtractor,
+            net_arch=dict(pi=[256, 128], vf=[256, 128]),
+        )
         model = MaskablePPO(
-            "MlpPolicy",
+            "MultiInputPolicy",
             train_env,
             n_steps=N_STEPS,
             batch_size=BATCH_SIZE,
@@ -148,25 +153,44 @@ def main() -> None:
             gamma=GAMMA,
             ent_coef=ENT_COEF,
             clip_range=CLIP_RANGE,
+            policy_kwargs=policy_kwargs,
             device=DEVICE,
             verbose=1,
         )
 
-        # BC warm-start: copy BC-trained weights into the policy network
+        # BC warm-start: copy BC-trained weights into the MultiInputPolicy.
+        # The BCPolicy in bc_train.py mirrors the SB3 MaskablePPO layer structure
+        # (CNN+MLP feature extractor + 256-128-action MLP actor head) so this is
+        # a straight key→key copy, no shape transforms needed.
         if BC_INIT_FROM and Path(BC_INIT_FROM).exists():
             print(f"Warm-starting actor from BC model: {BC_INIT_FROM}")
             bc_state = torch.load(BC_INIT_FROM, map_location=DEVICE)
             pol = model.policy
             with torch.no_grad():
-                # MaskablePPO MlpPolicy uses mlp_extractor.policy_net (Sequential)
-                # composed of Linear-Tanh-Linear-Tanh; weights live at indices 0 and 2.
-                pol.mlp_extractor.policy_net[0].weight.copy_(bc_state["fc1.weight"])
-                pol.mlp_extractor.policy_net[0].bias.copy_(bc_state["fc1.bias"])
-                pol.mlp_extractor.policy_net[2].weight.copy_(bc_state["fc2.weight"])
-                pol.mlp_extractor.policy_net[2].bias.copy_(bc_state["fc2.bias"])
+                fe = pol.features_extractor  # OpenFrontExtractor instance
+
+                # CNN branch
+                fe.cnn[0].weight.copy_(bc_state["cnn.0.weight"])
+                fe.cnn[0].bias.copy_(bc_state["cnn.0.bias"])
+                fe.cnn[2].weight.copy_(bc_state["cnn.2.weight"])
+                fe.cnn[2].bias.copy_(bc_state["cnn.2.bias"])
+                fe.cnn[4].weight.copy_(bc_state["cnn.4.weight"])
+                fe.cnn[4].bias.copy_(bc_state["cnn.4.bias"])
+                fe.cnn_head[0].weight.copy_(bc_state["cnn_head.0.weight"])
+                fe.cnn_head[0].bias.copy_(bc_state["cnn_head.0.bias"])
+
+                # MLP branch (vec)
+                fe.vec_head[0].weight.copy_(bc_state["vec_head.0.weight"])
+                fe.vec_head[0].bias.copy_(bc_state["vec_head.0.bias"])
+
+                # Actor MLP head + action net
+                pol.mlp_extractor.policy_net[0].weight.copy_(bc_state["policy_net_0.weight"])
+                pol.mlp_extractor.policy_net[0].bias.copy_(bc_state["policy_net_0.bias"])
+                pol.mlp_extractor.policy_net[2].weight.copy_(bc_state["policy_net_2.weight"])
+                pol.mlp_extractor.policy_net[2].bias.copy_(bc_state["policy_net_2.bias"])
                 pol.action_net.weight.copy_(bc_state["action_head.weight"])
                 pol.action_net.bias.copy_(bc_state["action_head.bias"])
-            print("  ✓ BC weights loaded into policy actor (critic stays random)")
+            print("  ✓ BC weights loaded into policy (critic stays random)")
 
     model.learn(
         total_timesteps=TOTAL_TIMESTEPS,

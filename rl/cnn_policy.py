@@ -1,7 +1,7 @@
 """
 Custom feature extractor combining:
-  - Small CNN for the spatial map patch (4 × 32 × 32)
-  - MLP for the flat feature vector (62-dim)
+  - Small CNN for the spatial map patch (5 × 32 × 32)
+  - MLP for the flat feature vector (81-dim)
 
 Used as policy_kwargs["features_extractor_class"] in MaskablePPO.
 """
@@ -14,9 +14,9 @@ import torch.nn as nn
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 # Must match env.py constants
-PATCH_CHANNELS = 4
+PATCH_CHANNELS = 5
 PATCH_SIZE = 32
-VEC_SIZE = 62
+VEC_SIZE = 81
 
 CNN_OUT = 256   # flattened CNN output features
 MLP_OUT = 128   # flat-vec embedding size
