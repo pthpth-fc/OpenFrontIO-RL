@@ -7,13 +7,17 @@ import { K_NEIGHBORS } from "./RLConfig";
 
 // Action layout (must match ActionDecoder.ts):
 // 0=noop, 1..K=attack[k], K+1..2K=ally_req[k], 2K+1..3K=break_ally[k],
-// 3K+1=city, 3K+2=defpost, 3K+3=expand
+// 3K+1=city, 3K+2=defpost, 3K+3=expand,
+// 3K+4=port, 3K+5..4K+4=boat_attack[k], 4K+5=boat_expand
 const ATTACK_BASE = 1;
 const ALLY_REQ_BASE = 1 + K_NEIGHBORS;
 const BREAK_ALLY_BASE = 1 + K_NEIGHBORS * 2;
 const BUILD_CITY = 1 + K_NEIGHBORS * 3;
 const BUILD_DEFPOST = 1 + K_NEIGHBORS * 3 + 1;
-const EXPAND = 1 + K_NEIGHBORS * 3 + 2;
+const EXPAND_LAND = 1 + K_NEIGHBORS * 3 + 2;
+const BUILD_PORT = 1 + K_NEIGHBORS * 3 + 3;
+const BOAT_ATTACK_BASE = 1 + K_NEIGHBORS * 3 + 4;
+const BOAT_EXPAND = 1 + K_NEIGHBORS * 4 + 4;
 
 /**
  * Wraps `game.addExecution` so that whenever a tracked player adds an
@@ -31,20 +35,33 @@ export function attachDemoHook(
   const original = game.addExecution.bind(game);
 
   function classify(e: Execution): { playerID: string; action: number } | null {
-    // AttackExecution: target=null → expand, target=Player → attack[k]
+    // AttackExecution:
+    //   sourceTile=null  + target=null   → land expand (action 27)
+    //   sourceTile=null  + target=Player → land attack[k]
+    //   sourceTile=tile  + target=null   → boat expand (last action)
+    //   sourceTile=tile  + target=Player → boat attack[k]
     if (e instanceof AttackExecution) {
       const owner = (e as unknown as { _owner: Player })._owner;
       const targetID = (e as unknown as { _targetID: string | null })._targetID;
+      const sourceTile = (e as unknown as { sourceTile: number | null }).sourceTile;
       if (!owner) return null;
       const order = neighborOrders.get(owner.id());
       if (!order) return null;
 
+      const isBoat = sourceTile !== null && sourceTile !== undefined;
+
       if (targetID === null) {
-        return { playerID: owner.id(), action: EXPAND };
+        return {
+          playerID: owner.id(),
+          action: isBoat ? BOAT_EXPAND : EXPAND_LAND,
+        };
       }
       const k = order.indexOf(targetID);
       if (k >= 0 && k < K_NEIGHBORS) {
-        return { playerID: owner.id(), action: ATTACK_BASE + k };
+        return {
+          playerID: owner.id(),
+          action: (isBoat ? BOAT_ATTACK_BASE : ATTACK_BASE) + k,
+        };
       }
       return null;
     }
@@ -87,6 +104,9 @@ export function attachDemoHook(
       }
       if (constructionType === UnitType.DefensePost) {
         return { playerID: player.id(), action: BUILD_DEFPOST };
+      }
+      if (constructionType === UnitType.Port) {
+        return { playerID: player.id(), action: BUILD_PORT };
       }
       return null;
     }

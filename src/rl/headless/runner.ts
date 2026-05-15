@@ -231,7 +231,7 @@ function buildResetResponse(): ResetResponse {
     extractObs(g, agent, g.numLandTiles(), neighbors, ticks, prevTiles),
   );
   const map = Array.from(extractSpatialObs(g, agent));
-  const mask = computeActionMask(agent, neighbors);
+  const mask = computeActionMask(agent, neighbors, g);
   return { vec, map, mask };
 }
 
@@ -303,7 +303,7 @@ function stepEpisode(action: number): StepResponse {
     extractObs(g, agent, g.numLandTiles(), neighbors, ticks, prevTiles),
   );
   const map = Array.from(extractSpatialObs(g, agent));
-  const mask = computeActionMask(agent, neighbors);
+  const mask = computeActionMask(agent, neighbors, g);
 
   return { vec, map, mask, reward, done, info: { ticks, kills } };
 }
@@ -459,11 +459,12 @@ async function runDemoEpisode(numBots: number): Promise<void> {
         prevTiles,
       ),
     );
-    const mask = computeActionMask(player, neighbors);
+    const map = Array.from(extractSpatialObs(localGame, player));
+    const mask = computeActionMask(player, neighbors, localGame);
 
     process.stdout.write(
       JSON.stringify({
-        sample: { vec, mask, action, player_id: playerID },
+        sample: { vec, map, mask, action, player_id: playerID },
       }) + "\n",
     );
     nSamples++;

@@ -75,12 +75,14 @@ export function extractObs(
   // Game phase (1)
   obs[i++] = Math.min(ticks / MAX_EPISODE_TICKS, 1);
 
-  // Structure counts, log-scaled to keep small numbers separable (2)
+  // Structure counts, log-scaled to keep small numbers separable (3)
   // log(1+count)/log(11) ≈ maps 0→0, 10→1, saturates above
   const numCities = agent.units(UnitType.City).length;
   const numDefposts = agent.units(UnitType.DefensePost).length;
+  const numPorts = agent.units(UnitType.Port).length;
   obs[i++] = Math.min(Math.log1p(numCities) / Math.log(11), 1);
   obs[i++] = Math.min(Math.log1p(numDefposts) / Math.log(11), 1);
+  obs[i++] = Math.min(Math.log1p(numPorts) / Math.log(11), 1);
 
   // Recent tile delta as a fraction of current territory (1)
   // Positive = growing, negative = losing tiles to attackers
@@ -118,9 +120,12 @@ export function extractObs(
 export function computeActionMask(
   agent: Player,
   neighbors: Neighbors,
+  game?: Game,
 ): boolean[] {
-  const mask: boolean[] = new Array(1 + K_NEIGHBORS * 3 + 3).fill(false);
+  const mask: boolean[] = new Array(1 + K_NEIGHBORS * 4 + 5).fill(false);
   mask[0] = true; // no-op always valid
+
+  const hasPort = agent.units(UnitType.Port).length > 0;
 
   for (let k = 0; k < K_NEIGHBORS; k++) {
     const n = neighbors.list[k];
@@ -141,14 +146,34 @@ export function computeActionMask(
     if (agent.allianceWith(n) !== null) {
       mask[1 + K_NEIGHBORS * 2 + k] = true;
     }
+    // Boat attack: valid if we have a port and target is alive (engine handles
+    // the rest — if there's no viable sea route, the AttackExecution rejects).
+    if (hasPort && !agent.isFriendly(n)) {
+      mask[K_NEIGHBORS * 3 + 5 + k] = true;
+    }
   }
 
   // Build actions
-  mask[1 + K_NEIGHBORS * 3] = agent.numTilesOwned() > 5; // city
-  mask[1 + K_NEIGHBORS * 3 + 1] = agent.borderTiles().size > 0; // defpost
+  mask[K_NEIGHBORS * 3 + 1] = agent.numTilesOwned() > 5; // city
+  mask[K_NEIGHBORS * 3 + 2] = agent.borderTiles().size > 0; // defpost
 
   // Expand (attack TerraNullius): valid whenever agent has tiles to attack from
-  mask[1 + K_NEIGHBORS * 3 + 2] = agent.numTilesOwned() > 0;
+  mask[K_NEIGHBORS * 3 + 3] = agent.numTilesOwned() > 0;
+
+  // Build port: requires a shoreline border tile
+  if (game) {
+    let hasShoreBorder = false;
+    for (const t of agent.borderTiles()) {
+      if (game.isShoreline(t)) {
+        hasShoreBorder = true;
+        break;
+      }
+    }
+    mask[K_NEIGHBORS * 3 + 4] = hasShoreBorder;
+  }
+
+  // Boat expand: requires at least one port
+  mask[K_NEIGHBORS * 4 + 5] = hasPort;
 
   return mask;
 }

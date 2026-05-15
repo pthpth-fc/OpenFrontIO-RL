@@ -12,6 +12,8 @@ const HALF = PATCH_SIZE >> 1;
  *   1 – agent tiles     (1 = owned by agent)
  *   2 – enemy tiles     (1 = owned by a non-allied player)
  *   3 – ally tiles      (1 = owned by an allied player)
+ *   4 – own border      (1 = agent's exposed border tile — directly tells the
+ *                        policy where it's vulnerable without deriving from masks)
  */
 export function extractSpatialObs(game: Game, agent: Player): Float32Array {
   const mapW = game.width();
@@ -46,6 +48,9 @@ export function extractSpatialObs(game: Game, agent: Player): Float32Array {
     }),
   );
 
+  // Own-border tile lookup (Ch4). Cached as a Set of refs for O(1) check.
+  const ownBorders = agent.borderTiles();
+
   // ── Fill channels ─────────────────────────────────────────────────────────
   const P = PATCH_SIZE;
   const C = PATCH_CHANNELS;
@@ -75,6 +80,10 @@ export function extractSpatialObs(game: Game, agent: Player): Float32Array {
       if (ownerID === agent.id()) {
         // Ch1: self
         out[1 * P * P + pixelBase] = 1;
+        // Ch4: own border
+        if (ownBorders.has(ref)) {
+          out[4 * P * P + pixelBase] = 1;
+        }
       } else if (allyIDs.has(ownerID)) {
         // Ch3: ally
         out[3 * P * P + pixelBase] = 1;

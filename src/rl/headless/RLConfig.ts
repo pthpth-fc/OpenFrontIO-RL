@@ -1,18 +1,29 @@
-export const K_NEIGHBORS = 8;
+export const K_NEIGHBORS = 10;
 
-// Self features: 10
+// Self features: 11
 //   Original 6: troops, gold, tiles%, border_exposure, alliance_density, rank
 //   Added 4:    game_phase, num_cities (log), num_defposts (log), tile_delta_recent
+//   Added 1:    num_ports (log) — ports gate boat-based actions
 // Per-neighbor features: 7 each × K
-export const OBS_SIZE = 10 + K_NEIGHBORS * 7;
+export const OBS_SIZE = 11 + K_NEIGHBORS * 7;
 
-// 0=noop, 1..K=attack[i], K+1..2K=ally_req[i], 2K+1..3K=break_ally[i], 3K+1=city, 3K+2=defpost, 3K+3=expand (attack TerraNullius)
-export const ACTION_SIZE = 1 + K_NEIGHBORS * 3 + 3;
+// Action layout (slots 0..27 unchanged from v4 so v8 weights can transfer):
+//   0                                    noop
+//   1..K                                 attack[k]                (land, must border)
+//   K+1..2K                              ally_req[k]
+//   2K+1..3K                             break_ally[k]
+//   3K+1                                 build_city
+//   3K+2                                 build_defpost
+//   3K+3                                 expand                   (land, attack TerraNullius)
+//   3K+4                                 build_port               (NEW)
+//   3K+5..4K+4                           boat_attack[k]           (NEW; attack via ship from a port)
+//   4K+5                                 boat_expand              (NEW; ship to unclaimed shore)
+export const ACTION_SIZE = 1 + K_NEIGHBORS * 4 + 5;
 
 // Spatial patch (channels-first, CHW)
-// Channels: 0=land, 1=self, 2=enemy, 3=ally
+// Channels: 0=land, 1=self, 2=enemy, 3=ally, 4=own_border (exposed agent tiles)
 export const PATCH_SIZE = 32;
-export const PATCH_CHANNELS = 4;
+export const PATCH_CHANNELS = 5;
 
 export const DECISION_INTERVAL = 50; // ticks between agent decisions
 export const SPAWN_PHASE_BUFFER = 250; // longer to allow ~10 players to spawn on bigger maps
